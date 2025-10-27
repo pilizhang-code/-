@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LeanCloud同步测试</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <!-- LeanCloud SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/leancloud-storage@4.13.0/dist/av-min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/leancloud-realtime@4.0.0/dist/realtime-min.js"></script>
+    <!-- LeanCloud配置 -->
+    <script src="js/leancloud-config.js"></script>
+    <!-- LeanCloud数据同步模块 -->
+    <script src="js/leancloud.js"></script>
+    <style>
+        .status-success { color: green; }
+        .status-error { color: red; }
+        .status-info { color: blue; }
+        .log-item { margin: 5px 0; padding: 5px; border-bottom: 1px solid #eee; }
+        .log-timestamp { color: #666; font-size: 0.8em; }
+        .log-content { margin-left: 10px; }
+    </style>
+</head>
+<body class="p-4">
+    <div class="max-w-4xl mx-auto">
+        <h1 class="text-2xl font-bold mb-4">LeanCloud同步测试</h1>
+        
+        <div class="mb-4">
+            <h2 class="text-xl font-semibold mb-2">同步状态</h2>
+            <div id="sync-status" class="p-2 border rounded">
+                <div>初始化中...</div>
+            </div>
+        </div>
+        
+        <div class="mb-4">
+            <h2 class="text-xl font-semibold mb-2">操作</h2>
+            <button id="sync-now" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+                <i class="fa fa-refresh mr-1"></i> 立即同步
+            </button>
+            <button id="test-save" class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 ml-2">
+                <i class="fa fa-save mr-1"></i> 测试保存数据
+            </button>
+            <button id="clear-data" class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 ml-2">
+                <i class="fa fa-trash mr-1"></i> 清除本地数据
+            </button>
+        </div>
+        
+        <div class="mb-4">
+            <h2 class="text-xl font-semibold mb-2">同步日志</h2>
+            <div id="sync-log" class="h-64 overflow-y-auto border rounded p-2">
+                <div class="log-item">
+                    <span class="log-timestamp">[初始化]</span>
+                    <span class="log-content">开始记录同步日志...</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="mb-4">
+            <h2 class="text-xl font-semibold mb-2">数据状态</h2>
+            <div id="data-status" class="p-2 border rounded">
+                <div>本地仪器数据: <span id="local-instruments-count">0</span> 条</div>
+                <div>云端仪器数据: <span id="cloud-instruments-count">0</span> 条</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 添加日志
+        function addLog(content, type = 'info') {
+            const logContainer = document.getElementById('sync-log');
+            const logItem = document.createElement('div');
+            logItem.className = `log-item log-${type}`;
+            
+            const timestamp = new Date().toISOString();
+            logItem.innerHTML = `
+                <span class="log-timestamp">[${timestamp}]</span>
+                <span class="log-content">${content}</span>
+            `;
+            
+            logContainer.appendChild(logItem);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        // 更新同步状态显示
+        function updateSyncStatusDisplay() {
+            if (window.lcSync) {
+                const syncStatus = lcSync.getSyncStatus();
+                const statusElement = document.getElementById('sync-status');
+                
+                let statusHTML = '';
+                statusHTML += `<div>同步状态: `;
+                
+                if (syncStatus.isSyncing) {
+                    statusHTML += `<span class="status-info">同步中...</span></div>`;
+                } else if (syncStatus.syncError) {
+                    statusHTML += `<span class="status-error">同步失败</span></div>`;
+                    statusHTML += `<div>错误信息: ${syncStatus.syncError.message}</div>`;
+                } else if (syncStatus.lastSyncTime) {
+                    statusHTML += `<span class="status-success">已同步</span></div>`;
+                    statusHTML += `<div>最后同步时间: ${syncStatus.lastSyncTime.toISOString()}</div>`;
+                } else {
+                    statusHTML += `<span class="status-info">未同步</span></div>`;
+                }
+                
+                statusHTML += `<div>LeanCloud配置: ${LC_CONFIG.appId ? '已配置' : '未配置'}</div>`;
+                
+                statusElement.innerHTML = statusHTML;
+            }
+        }
+        
+        // 更新数据状态显示
+        function updateDataStatusDisplay() {
+            if (window.lcSync) {
+                const localData = lcSync.getLocalData();
+                document.getElementById('local-instruments-count').textContent = localData.instruments.length;
+                
+                // 查询云端数据
+                if (typeof AV !== 'undefined') {
+                    const Instrument = AV.Object.extend('Instrument');
+                    const query = new AV.Query(Instrument);
+                    
+                    query.count().then(count => {
+                        document.getElementById('cloud-instruments-count').textContent = count;
+                    }).catch(error => {
+                        document.getElementById('cloud-instruments-count').textContent = `查询失败: ${error.message}`;
+                    });
+                }
+            }
+        }
+        
+        // 测试保存数据
+        function testSaveData() {
+            addLog('开始测试保存数据...');
+            
+            // 创建测试仪器数据
+            const testInstrument = {
+                id: 'TEST' + Date.now().toString().slice(-6),
+                code: 'TEST' + Date.now().toString().slice(-6),
+                name: '测试仪器',
+                roomNumber: 'TEST-ROOM',
+                status: 'normal',
+                maintenanceRecords: [
+                    {
+                        type: '测试维护',
+                        content: '测试维护内容',
+                        cycle: 30,
+                        nextMaintenance: new Date().toISOString().split('T')[0],
+                        lastMaintenance: null,
+                        completedBy: 'test-user',
+                        completedAt: new Date().toISOString()
+                    }
+                ],
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+            
+            // 触发保存事件
+            try {
+                const event = new CustomEvent('lc:saveInstrument', {
+                    detail: { data: testInstrument }
+                });
+                document.dispatchEvent(event);
+                
+                addLog('测试数据保存事件已触发', 'success');
+                
+                // 延迟更新数据状态显示
+                setTimeout(updateDataStatusDisplay, 2000);
+            } catch (error) {
+                addLog(`保存测试数据失败: ${error.message}`, 'error');
+            }
+        }
+        
+        // 清除本地数据
+        function clearLocalData() {
+            if (confirm('确定要清除所有本地数据吗？')) {
+                localStorage.removeItem('instrumentData');
+                localStorage.removeItem('meetingData');
+                localStorage.removeItem('deviationData');
+                localStorage.removeItem('userData');
+                localStorage.removeItem('auditData');
+                
+                addLog('本地数据已清除', 'success');
+                updateDataStatusDisplay();
+            }
+        }
+        
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            addLog('页面加载完成，初始化测试...');
+            
+            // 检查LeanCloud SDK是否加载
+            if (typeof AV === 'undefined') {
+                addLog('LeanCloud SDK未加载', 'error');
+            } else {
+                addLog('LeanCloud SDK已加载', 'success');
+            }
+            
+            // 检查LeanCloud配置
+            if (window.LC_CONFIG) {
+                addLog('LeanCloud配置已加载', 'success');
+                addLog(`App ID: ${LC_CONFIG.appId}`, 'info');
+                addLog(`Server URL: ${LC_CONFIG.serverURLs}`, 'info');
+            } else {
+                addLog('LeanCloud配置未加载', 'error');
+            }
+            
+            // 检查LeanCloudSync实例
+            if (window.lcSync) {
+                addLog('LeanCloudSync实例已创建', 'success');
+                
+                // 初始化实时通信
+                if (window.lcSync.initRealtime) {
+                    window.lcSync.initRealtime().then(success => {
+                        if (success) {
+                            addLog('实时通信初始化成功', 'success');
+                        } else {
+                            addLog('实时通信初始化失败', 'error');
+                        }
+                    }).catch(error => {
+                        addLog(`实时通信初始化异常: ${error.message}`, 'error');
+                    });
+                }
+            } else {
+                addLog('LeanCloudSync实例未创建', 'error');
+            }
+            
+            // 绑定按钮事件
+            document.getElementById('sync-now').addEventListener('click', function() {
+                if (window.syncData) {
+                    addLog('触发手动同步...');
+                    this.disabled = true;
+                    this.innerHTML = '<i class="fa fa-spinner fa-spin mr-1"></i> 同步中...';
+                    
+                    syncData().then(success => {
+                        if (success) {
+                            addLog('手动同步成功', 'success');
+                        } else {
+                            addLog('手动同步失败', 'error');
+                        }
+                    }).catch(error => {
+                        addLog(`手动同步异常: ${error.message}`, 'error');
+                    }).finally(() => {
+                        this.disabled = false;
+                        this.innerHTML = '<i class="fa fa-refresh mr-1"></i> 立即同步';
+                        updateDataStatusDisplay();
+                    });
+                } else {
+                    addLog('syncData函数未定义', 'error');
+                }
+            });
+            
+            document.getElementById('test-save').addEventListener('click', testSaveData);
+            document.getElementById('clear-data').addEventListener('click', clearLocalData);
+            
+            // 监听同步事件
+            document.addEventListener('lc:syncComplete', function(e) {
+                addLog('数据同步完成', 'success');
+                updateSyncStatusDisplay();
+                updateDataStatusDisplay();
+            });
+            
+            document.addEventListener('lc:syncError', function(e) {
+                addLog(`数据同步失败: ${e.detail.error.message}`, 'error');
+                updateSyncStatusDisplay();
+            });
+            
+            // 定时更新状态
+            setInterval(function() {
+                updateSyncStatusDisplay();
+            }, 3000);
+            
+            // 初始更新
+            updateSyncStatusDisplay();
+            updateDataStatusDisplay();
+        });
+    </script>
+</body>
+</html>
