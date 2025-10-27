@@ -3,18 +3,39 @@
  * 实现与LeanCloud的通信，包括数据存储、查询和实时同步
  */
 
-// LeanCloud配置
-const LC_APP_ID = 'i3HOlSULshlcZHb2eLPPeAeq-gzGzoHsz';
-const LC_APP_key = 'RIRWzdOmEoM02P4gbAEXQp69';
-const LC_SERVER_URL = 'https://i3holsul.lc-cn-n1-shared.com'; // 国内国内节点需要配置
+// 加载LeanCloud配置
+let LC_CONFIG = {
+    appId: '填写您的App ID',
+    appKey: '填写您的App Key',
+    serverURLs: 'https://填写您的应用域名.leancloud.cn' // 国内节点需要配置
+};
+
+// 尝试从配置文件加载配置
+try {
+    // 如果有单独的配置文件，会覆盖上面的默认配置
+    if (typeof window.LC_CONFIG !== 'undefined') {
+        LC_CONFIG = window.LC_CONFIG;
+        console.log('从全局配置加载LeanCloud配置');
+    }
+} catch (error) {
+    console.warn('加载配置文件失败，使用默认配置:', error);
+}
 
 // 初始化LeanCloud
 if (typeof AV !== 'undefined') {
-    AV.init({
-        appId: LC_APP_ID,
-        appKey: LC_APP_KEY,
-        serverURLs: LC_SERVER_URL
-    });
+    // 检查配置是否完整
+    if (!LC_CONFIG.appId || !LC_CONFIG.appKey) {
+        console.error('LeanCloud配置不完整，请填写App ID和App Key');
+    } else {
+        AV.init({
+            appId: LC_CONFIG.appId,
+            appKey: LC_CONFIG.appKey,
+            serverURLs: LC_CONFIG.serverURLs
+        });
+        
+        console.log('LeanCloud初始化成功');
+    }
+}
     
     console.log('LeanCloud初始化成功');
 } else {
@@ -65,10 +86,13 @@ class LeanCloudSync {
             auditLogs: []
         };
         
-        // 实时时通信
+        // 实时通信
         this.realtime = null;
         this.connection = null;
         this.channels = {};
+        
+        // 绑定事件监听器
+        this.bindEventListeners();
     }
     
     /**
@@ -177,6 +201,12 @@ class LeanCloudSync {
      * 处理频道消息
      */
     handleChannelMessage(channelName, message) {
+        // 检查消息格式
+        if (!message.type || !message.data) {
+            console.warn('无效的频道消息格式:', message);
+            return;
+        }
+        
         switch (message.type) {
             case 'create':
                 this.handleCreateEvent(channelName, message.data);
@@ -190,6 +220,8 @@ class LeanCloudSync {
             case 'sync':
                 this.syncData();
                 break;
+            default:
+                console.log(`未知的消息类型: ${message.type}`);
         }
     }
     
@@ -198,15 +230,17 @@ class LeanCloudSync {
      */
     handleCreateEvent(channelName, data) {
         console.log(`收到${channelName}创建事件`, data);
-        this.syncData();
+        // 触发同步完成事件，通知UI更新
+        this.triggerSyncComplete();
     }
     
     /**
      * 处理更新事件
      */
     handleUpdateEvent(channelName, data) {
-        console.log(`收到到${channelName}更新事件`, data);
-        this.syncData();
+        console.log(`收到${channelName}更新事件`, data);
+        // 触发同步完成事件，通知UI更新
+        this.triggerSyncComplete();
     }
     
     /**
@@ -214,7 +248,8 @@ class LeanCloudSync {
      */
     handleDeleteEvent(channelName, data) {
         console.log(`收到${channelName}删除事件`, data);
-        this.syncData();
+        // 触发同步完成事件，通知UI更新
+        this.triggerSyncComplete();
     }
     
     /**
@@ -231,7 +266,7 @@ class LeanCloudSync {
                 console.log(`广播${channelName}${type}事件成功`);
             }
         } catch (error) {
-            console.error(`广播数据变更失败:', error);
+            console.error(`广播数据变更失败:`, error);
         }
     }
     
@@ -245,6 +280,13 @@ class LeanCloudSync {
         }
         
         try {
+            // 检查LeanCloud配置是否完整
+            if (!LC_CONFIG.appId || !LC_CONFIG.appKey) {
+                console.error('LeanCloud配置不完整，无法同步数据');
+                this.triggerSyncError(new Error('LeanCloud配置不完整'));
+                return false;
+            }
+            
             this.syncStatus.isSyncing = true;
             this.syncStatus.syncError = null;
             
@@ -269,6 +311,10 @@ class LeanCloudSync {
         } catch (error) {
             this.syncStatus.syncError = error;
             console.error('数据同步失败:', error);
+            
+            // 触发同步错误事件
+            this.triggerSyncError(error);
+            
             return false;
         } finally {
             this.syncStatus.isSyncing = false;

@@ -9,6 +9,8 @@
     <!-- LeanCloud SDK -->
     <script src="https://cdn.jsdelivr.net/npm/leancloud-storage@4.13.0/dist/av-min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/leancloud-realtime@4.0.0/dist/realtime-min.js"></script>
+    <!-- LeanCloud配置 -->
+    <script src="js/leancloud-config.js"></script>
     <!-- LeanCloud数据同步模块 -->
     <script src="js/leancloud.js"></script>
     <!-- 自定义 Tailwind 配置 -->
@@ -947,6 +949,9 @@
                     document.dispatchEvent(event);
                 }, 2000);
             }
+            
+            // 初始化数据同步状态显示
+            updateSyncStatusDisplay();
         }
 
         // 初始化数据
@@ -4182,6 +4187,62 @@
         // 保存数据到localStorage
         function saveData(key, data) {
             localStorage.setItem(key, JSON.stringify(data));
+            
+            // 如果有LeanCloud同步实例，尝试同步到云端
+            if (window.lcSync) {
+                try {
+                    // 根据数据类型触发不同的同步事件
+                    switch (key) {
+                        case 'instrumentData':
+                            // 同步每个仪器
+                            data.instruments.forEach(instrument => {
+                                const event = new CustomEvent('lc:saveInstrument', {
+                                    detail: { data: instrument }
+                                });
+                                document.dispatchEvent(event);
+                            });
+                            break;
+                        case 'meetingData':
+                            // 同步每个会议纪要
+                            data.meetings.forEach(meeting => {
+                                const event = new CustomEvent('lc:saveMeeting', {
+                                    detail: { data: meeting }
+                                });
+                                document.dispatchEvent(event);
+                            });
+                            break;
+                        case 'deviationData':
+                            // 同步每个偏离记录
+                            data.deviations.forEach(deviation => {
+                                const event = new CustomEvent('lc:saveDeviation', {
+                                    detail: { data: deviation }
+                                });
+                                document.dispatchEvent(event);
+                            });
+                            break;
+                        case 'userData':
+                            // 同步每个用户
+                            data.users.forEach(user => {
+                                const event = new CustomEvent('lc:saveUser', {
+                                    detail: { data: user }
+                                });
+                                document.dispatchEvent(event);
+                            });
+                            break;
+                        case 'auditData':
+                            // 同步每个审计日志
+                            data.logs.forEach(log => {
+                                const event = new CustomEvent('lc:saveAuditLog', {
+                                    detail: { data: log }
+                                });
+                                document.dispatchEvent(event);
+                            });
+                            break;
+                    }
+                } catch (error) {
+                    console.error('同步数据到LeanCloud失败:', error);
+                }
+            }
         }
 
         // 从localStorage获取数据
@@ -4249,16 +4310,66 @@
         // 页面加载完成后初始化
         document.addEventListener('DOMContentLoaded', init);
         
+        // 更新同步状态显示
+        function updateSyncStatusDisplay() {
+            if (window.lcSync && document.getElementById('sync-status')) {
+                const syncStatus = lcSync.getSyncStatus();
+                
+                if (syncStatus.isSyncing) {
+                    document.getElementById('sync-status').textContent = '同步中...';
+                    document.getElementById('sync-status').classList.remove('text-green-500', 'text-red-500');
+                    document.getElementById('sync-status').classList.add('text-warning');
+                } else if (syncStatus.syncError) {
+                    document.getElementById('sync-status').textContent = '同步失败';
+                    document.getElementById('sync-status').classList.remove('text-warning', 'text-green-500');
+                    document.getElementById('sync-status').classList.add('text-red-500');
+                } else if (syncStatus.lastSyncTime) {
+                    document.getElementById('sync-status').textContent = '已同步';
+                    document.getElementById('sync-status').classList.remove('text-warning', 'text-red-500');
+                    document.getElementById('sync-status').classList.add('text-green-500');
+                } else {
+                    document.getElementById('sync-status').textContent = '未同步';
+                    document.getElementById('sync-status').classList.remove('text-warning', 'text-green-500');
+                    document.getElementById('sync-status').classList.add('text-gray-500');
+                }
+            }
+        }
+        
+        // 显示提示消息
+        function showToast(message, type = 'success') {
+            // 创建提示元素
+            const toast = document.createElement('div');
+            toast.className = `fixed top-4 right-4 px-4 py-2 rounded-md shadow-lg z-50 transition-opacity duration-300 ${
+                type === 'success' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'
+            }`;
+            toast.textContent = message;
+            
+            // 添加到页面
+            document.body.appendChild(toast);
+            
+            // 淡入效果
+            setTimeout(() => {
+                toast.classList.add('opacity-90');
+            }, 10);
+            
+            // 自动关闭
+            setTimeout(() => {
+                toast.classList.remove('opacity-90');
+                toast.classList.add('opacity-0');
+                
+                // 移除元素
+                setTimeout(() => {
+                    document.body.removeChild(toast);
+                }, 300);
+            }, 3000);
+        }
+        
         // 监听LeanCloud同步完成事件
         document.addEventListener('lc:syncComplete', function(e) {
             console.log('数据同步完成，最后同步时间:', e.detail.lastSyncTime);
             
             // 更新同步状态显示
-            if (document.getElementById('sync-status')) {
-                document.getElementById('sync-status').textContent = '已同步';
-                document.getElementById('sync-status').classList.remove('text-warning', 'text-red-500');
-                document.getElementById('sync-status').classList.add('text-green-500');
-            }
+            updateSyncStatusDisplay();
             
             // 如果应用已初始化，重新渲染数据
             if (window.appInitialized) {
@@ -4269,6 +4380,9 @@
                 renderDeviationList();
                 renderUserList();
                 renderAuditLogs();
+                
+                // 显示成功提示
+                showToast('数据同步成功');
             }
         });
         
@@ -4277,11 +4391,10 @@
             console.error('数据同步失败:', e.detail.error);
             
             // 更新同步状态显示
-            if (document.getElementById('sync-status')) {
-                document.getElementById('sync-status').textContent = '同步失败';
-                document.getElementById('sync-status').classList.remove('text-warning', 'text-green-500');
-                document.getElementById('sync-status').classList.add('text-red-500');
-            }
+            updateSyncStatusDisplay();
+            
+            // 显示错误提示
+            showToast('数据同步失败: ' + e.detail.error.message, 'error');
         });
         
         // 会议纪要和偏离管理弹窗相关事件绑定
